@@ -1,0 +1,174 @@
+import info.solidsoft.gradle.pitest.PitestTask
+
+plugins {
+    id 'java'
+    id 'scala'
+    id 'info.solidsoft.pitest' version '1.4.7'
+}
+
+group 'ist'
+version '1.1'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.scala-lang:scala-library:2.13.1'
+    testImplementation 'junit:junit:4.13'
+    testImplementation group: 'org.scalacheck', name: 'scalacheck_2.13', version: '1.14.3'
+    testImplementation 'org.scalatest:scalatest_2.13:3.1.1'
+}
+
+test {
+    useJUnit()
+    exclude "at/tugraz/ist/qs2021/MessageBoardMutantTest.*"
+    group = "test"
+}
+
+task testMBProperties(type: Test) {
+    filter {
+        includeTestsMatching "*MessageBoardProperties*"
+    }
+    group = "test"
+    description = "Runs all local unit tests."
+}
+
+task testMBModel(type: Test) {
+    filter {
+        includeTestsMatching "at.tugraz.ist.qs2021.MessageBoardSpecificationTest.*"
+    }
+    group = "test"
+    description = "Runs model-based tests for the MessageBoard."
+}
+
+task testMBModelMutants(type: Test) {
+    filter {
+        includeTestsMatching "at.tugraz.ist.qs2021.MessageBoardMutantTest.testModel*"
+    }
+    group = "test"
+    description = "Runs your model-based MessageBoard tests remotely to kill mutants."
+}
+
+task testSimpleFunctions(type: Test) {
+    filter {
+        includeTestsMatching "*SimpleFunctionsTest*"
+    }
+    group = "test"
+    description = "Runs property-based tests for SimpleFunctions."
+
+}
+
+def PITEST_THREADS = 12  // set according to your capabilities
+def PITEST_OUT_FORMATS = ['HTML']
+
+def PITEST_MUTATORS = [
+        'INVERT_NEGS',
+        'INLINE_CONSTS',
+        'MATH',
+        'VOID_METHOD_CALLS',
+        'NEGATE_CONDITIONALS',
+//            'CONDITIONALS_BOUNDARY',
+        'INCREMENTS',
+        'REMOVE_INCREMENTS',
+        'NON_VOID_METHOD_CALLS',
+        'CONSTRUCTOR_CALLS',
+//            'REMOVE_CONDITIONALS_EQ_IF',
+        'REMOVE_CONDITIONALS_EQ_ELSE',
+        'REMOVE_CONDITIONALS_ORD_IF',
+        'REMOVE_CONDITIONALS_ORD_ELSE',
+        'RETURNS',
+        'EXPERIMENTAL_MEMBER_VARIABLE',
+        'EXPERIMENTAL_SWITCH',
+        'EXPERIMENTAL_ARGUMENT_PROPAGATION',
+        'EXPERIMENTAL_NAKED_RECEIVER',
+        'EXPERIMENTAL_BIG_INTEGER',
+        'AOR',
+        'ABS',
+        'AOD',
+        'CRCR',
+        'OBBN',
+//            'ROR1',
+//            'ROR2',
+        'ROR3',
+        'ROR4',
+        'ROR5',
+//            'UOI',
+        'REMOVE_SWITCH'
+] // See https://github.com/hcoles/pitest/blob/master/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/config/Mutator.java
+
+
+pitest {
+    targetClasses = ['at.tugraz.ist.qs2021.*']
+    pitestVersion = '1.5.1'
+    threads = PITEST_THREADS
+    outputFormats = PITEST_OUT_FORMATS
+    timestampedReports = false
+    excludedTestClasses = ['at.tugraz.ist.qs2021.MessageBoardMutantTest']
+    mutators = PITEST_MUTATORS
+}
+
+task pitestSimpleFunctions(type: MyPitestTask) {
+    coverageThreshold = 100
+    mutationThreshold = 92
+    reportDir = "pitestSimpleFunctions"
+    targetClasses = ['at.tugraz.ist.qs2021.simple.SimpleFunctions', 'at.tugraz.ist.qs2021.simple.SimpleFunctions$']
+    targetTests = ['at.tugraz.ist.qs2021.SimpleFunctionsTest']
+    mutators = PITEST_MUTATORS
+    group = "PiTest"
+    description = "Run PiTest with SimpleFunctions tests."
+}
+
+task pitestMBProperties(type: MyPitestTask) {
+    coverageThreshold = 80
+    mutationThreshold = 50
+    reportDir = "pitestMBProperties"
+    targetClasses = ['at.tugraz.ist.qs2021.actorsystem.*', 'at.tugraz.ist.qs2021.messageboard.*']
+    targetTests = ['at.tugraz.ist.qs2021.MessageBoardProperties']
+    mutators = PITEST_MUTATORS
+    group = "PiTest"
+    description = "Run PiTest with property-based MessageBoard tests."
+}
+
+task pitestMBModel(type: MyPitestTask) {
+    coverageThreshold = 80
+    mutationThreshold = 50
+    reportDir = "pitestMBModel"
+    targetClasses = ['at.tugraz.ist.qs2021.actorsystem.*', 'at.tugraz.ist.qs2021.messageboard.*']
+    targetTests = ['at.tugraz.ist.qs2021.MessageBoardSpecificationTest']
+    mutators = PITEST_MUTATORS
+    group = "PiTest"
+    description = "Run PiTest with model-based MessageBoard tests."
+}
+
+class MyPitestTask extends PitestTask {
+    MyPitestTask() {
+        Set<SourceSet> testSourceSets = project.sourceSets.test as Set<SourceSet>
+        dependsOn = testSourceSets.collect { sourceSet -> sourceSet.name + "Classes" } as Set
+        shouldRunAfter(project.tasks.named("test"))
+        List<FileCollection> testRuntimeClasspath = testSourceSets*.runtimeClasspath
+        FileCollection combinedTaskClasspath = project.objects.fileCollection().from(testRuntimeClasspath)
+        additionalClasspath = combinedTaskClasspath.filter { File file ->
+            !['pom', 'so', 'dll', 'dylib'].find { extension -> file.name.endsWith(".$extension") }
+        }
+        timestampedReports.set(false)
+        useAdditionalClasspathFile.set(false)
+        additionalClasspathFile.set(new File(project.buildDir, "pitClasspath"))
+        Set<SourceSet> mainSourceSets = project.sourceSets.main as Set<SourceSet>
+        mutableCodePaths = mainSourceSets*.output.classesDirs.files.flatten() as Set<File>
+        sourceDirs = mainSourceSets*.allSource*.srcDirs.flatten() as Set<File>
+        defaultFileForHistoryData.set(new File(project.buildDir, "pitHistory.txt"))
+        def config = project.rootProject.buildscript.configurations.maybeCreate('pitest').with { configuration ->
+            visible = false
+            description = "The Pitest libraries to be used for this project."
+            return configuration
+        }
+        config.dependencies.add(project.dependencies.create("org.pitest:pitest-command-line:1.5.1"))
+        launchClasspath = project.rootProject.buildscript.configurations['pitest']
+    }
+
+    void setReportDir(String dirname) {
+        this.reportDir.set(new File(project.reporting.baseDir, dirname))
+    }
+
+}
